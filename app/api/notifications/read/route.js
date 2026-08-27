@@ -1,0 +1,2 @@
+import { NextResponse } from 'next/server';import { getSession } from '../../../../lib/auth.js';import { readState,writeState } from '../../../../lib/supabase-admin.js';
+export async function POST(){const s=await getSession();if(!s)return NextResponse.json({error:'Oturum gerekli.'},{status:401});const state=await readState();let changed=false;for(const n of state.notifications||[]){if(n.targetUser===s.user&&!n.read){n.read=true;changed=true}}if(changed)await writeState(state);return NextResponse.json({ok:true})}

@@ -1,0 +1,4 @@
+import { NextResponse } from 'next/server';import { getSession } from '../../../lib/auth.js';import { readState,writeState } from '../../../lib/supabase-admin.js';
+export const dynamic='force-dynamic';
+export async function GET(){const s=await getSession();if(!s)return NextResponse.json({error:'Oturum gerekli.'},{status:401});try{return NextResponse.json(await readState())}catch(e){return NextResponse.json({error:'Supabase verisi okunamadı.',detail:String(e?.message||e)},{status:500})}}
+export async function PUT(req){const s=await getSession();if(!s)return NextResponse.json({error:'Oturum gerekli.'},{status:401});if(s.role!=='admin')return NextResponse.json({error:'Bu işlem için Yusuf yetkisi gerekir.'},{status:403});try{const state=await req.json();return NextResponse.json(await writeState(state))}catch(e){return NextResponse.json({error:'Supabase kaydı başarısız.',detail:String(e?.message||e)},{status:500})}}
