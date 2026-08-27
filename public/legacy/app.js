@@ -1,11 +1,9 @@
 'use strict';
 
-const STORAGE_KEY = 'kck:v6';
-const SESSION_KEY = 'kck:v6:user';
 const USERS = {
-  'Yusuf': { password: '2807', role: 'admin' },
-  'Ömer': { password: '123', role: 'viewer' },
-  'Taha': { password: '1313', role: 'viewer' }
+  'Yusuf': { role: 'admin' },
+  'Ömer': { role: 'viewer' },
+  'Taha': { role: 'viewer' }
 };
 const USER_NAMES = Object.keys(USERS);
 const ASSETS = ['TL', 'USD', 'EUR'];
@@ -34,8 +32,8 @@ const monthTR = (ym) => {
 const typeLabel = (t) => ACCOUNT_TYPES[t] || t;
 const isAdmin = () => currentUser === 'Yusuf';
 
-let state = loadState();
-let currentUser = sessionStorage.getItem(SESSION_KEY) || null;
+let state = defaultState();
+let currentUser = null;
 let selectedLoginUser = 'Yusuf';
 let route = { page: 'dashboard', id: null };
 
@@ -59,18 +57,21 @@ function defaultState(){
   };
 }
 
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    if (!parsed || parsed.version !== 6) return defaultState();
-    return { ...defaultState(), ...parsed };
-  }catch(e){ return defaultState(); }
+async function loadRemoteState(){
+  const r=await fetch('/api/state',{cache:'no-store'});
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error||'Veriler yüklenemedi.');
+  state=await r.json();
+  return state;
 }
-function saveState(render = true){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+async function saveState(render = true){
   if (render) renderApp();
+  if (!isAdmin()) return;
+  try{
+    const r=await fetch('/api/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)});
+    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error||'Kayıt başarısız.');
+    state=await r.json();
+    if (render) renderApp();
+  }catch(e){ toast(e.message||'Supabase kaydı başarısız.','bad'); }
 }
 function resetState(){
   if (!isAdmin()) return;
@@ -258,6 +259,7 @@ function renderLogin(){
       </div>
       <div class="field"><label>Şifre</label><div class="password-wrap"><input id="loginPassword" class="input" type="password" placeholder="Şifrenizi girin" autocomplete="current-password"><button id="togglePass" class="password-toggle" type="button">Göster</button></div></div>
       <button id="loginButton" class="auth-submit" type="button">Giriş Yap</button>
+      <button id="passkeyLoginButton" class="btn ghost" type="button" style="width:100%;margin-top:8px">Face ID / Passkey ile Gir</button>
       <div id="loginError" class="auth-error"></div>
       <div class="auth-foot">Yetkinize göre işlem menüleri otomatik olarak açılır.</div>
     </section>
@@ -271,14 +273,69 @@ function renderLogin(){
     const inp = $('#loginPassword'); inp.type = inp.type === 'password' ? 'text' : 'password'; $('#togglePass').textContent = inp.type === 'password' ? 'Göster' : 'Gizle';
   });
   $('#loginButton').addEventListener('click',doLogin);
+  $('#passkeyLoginButton').addEventListener('click',passkeyLogin);
   $('#loginPassword').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
 }
-function doLogin(){
+async function doLogin(){
   const pass = $('#loginPassword')?.value || '';
-  if (!USERS[selectedLoginUser] || USERS[selectedLoginUser].password !== pass){ $('#loginError').textContent='Kullanıcı veya şifre hatalı.'; return; }
-  currentUser = selectedLoginUser; sessionStorage.setItem(SESSION_KEY,currentUser); $('#loginRoot').classList.add('hidden'); $('#appRoot').classList.remove('hidden'); renderApp();
+  const err=$('#loginError'); err.textContent='';
+  try{
+    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:selectedLoginUser,password:pass})});
+    const data=await r.json();
+    if(!r.ok) throw new Error(data.error||'Giriş başarısız.');
+    currentUser=data.user;
+    await loadRemoteState();
+    $('#loginRoot').classList.add('hidden'); $('#appRoot').classList.remove('hidden'); renderApp();
+  }catch(e){err.textContent=e.message||'Kullanıcı veya şifre hatalı.'}
 }
-function logout(){ sessionStorage.removeItem(SESSION_KEY); currentUser=null; route={page:'dashboard',id:null}; $('#appRoot').classList.add('hidden'); $('#loginRoot').classList.remove('hidden'); renderLogin(); }
+async function logout(){
+  await fetch('/api/auth/logout',{method:'POST'}).catch(()=>{});
+  currentUser=null; route={page:'dashboard',id:null};
+  $('#appRoot').classList.add('hidden'); $('#loginRoot').classList.remove('hidden'); renderLogin();
+}
+
+function b64urlToBuf(s){
+  const b64=String(s).replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(String(s).length/4)*4,'=');
+  const bin=atob(b64); const out=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i); return out.buffer;
+}
+function bufToB64url(buf){
+  const bytes=new Uint8Array(buf); let bin=''; for(const b of bytes) bin+=String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function regCredentialJSON(cred){
+  return {id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,authenticatorAttachment:cred.authenticatorAttachment||undefined,
+    clientExtensionResults:cred.getClientExtensionResults?cred.getClientExtensionResults():{},
+    response:{clientDataJSON:bufToB64url(cred.response.clientDataJSON),attestationObject:bufToB64url(cred.response.attestationObject),transports:cred.response.getTransports?cred.response.getTransports():[]}};
+}
+function authCredentialJSON(cred){
+  return {id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,authenticatorAttachment:cred.authenticatorAttachment||undefined,
+    clientExtensionResults:cred.getClientExtensionResults?cred.getClientExtensionResults():{},
+    response:{clientDataJSON:bufToB64url(cred.response.clientDataJSON),authenticatorData:bufToB64url(cred.response.authenticatorData),signature:bufToB64url(cred.response.signature),userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null}};
+}
+function normalizeRegOptions(o){o.challenge=b64urlToBuf(o.challenge);o.user.id=b64urlToBuf(o.user.id);o.excludeCredentials=(o.excludeCredentials||[]).map(x=>({...x,id:b64urlToBuf(x.id)}));return o;}
+function normalizeAuthOptions(o){o.challenge=b64urlToBuf(o.challenge);o.allowCredentials=(o.allowCredentials||[]).map(x=>({...x,id:b64urlToBuf(x.id)}));return o;}
+async function passkeyLogin(){
+  const err=$('#loginError'); err.textContent='';
+  if(!window.PublicKeyCredential) return err.textContent='Bu cihaz Passkey / Face ID desteklemiyor.';
+  try{
+    let r=await fetch('/api/passkey/login/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:selectedLoginUser})});
+    let options=await r.json(); if(!r.ok) throw new Error(options.error||'Face ID başlatılamadı.');
+    const cred=await navigator.credentials.get({publicKey:normalizeAuthOptions(options)});
+    r=await fetch('/api/passkey/login/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(authCredentialJSON(cred))});
+    const data=await r.json(); if(!r.ok) throw new Error(data.error||'Face ID doğrulanamadı.');
+    currentUser=data.user; await loadRemoteState(); $('#loginRoot').classList.add('hidden'); $('#appRoot').classList.remove('hidden'); renderApp();
+  }catch(e){err.textContent=e.message||'Face ID ile giriş başarısız.'}
+}
+async function registerPasskey(){
+  if(!window.PublicKeyCredential) return toast('Bu cihaz Face ID / Passkey desteklemiyor.','bad');
+  try{
+    let r=await fetch('/api/passkey/register/options',{method:'POST'}); let options=await r.json(); if(!r.ok) throw new Error(options.error||'Face ID kaydı başlatılamadı.');
+    const cred=await navigator.credentials.create({publicKey:normalizeRegOptions(options)});
+    r=await fetch('/api/passkey/register/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(regCredentialJSON(cred))});
+    const data=await r.json(); if(!r.ok) throw new Error(data.error||'Face ID kaydedilemedi.');
+    toast('Face ID / Passkey bu cihaz için kaydedildi.','good');
+  }catch(e){toast(e.message||'Face ID kaydı başarısız.','bad')}
+}
 
 function setRoute(page,id=null){ route={page,id}; renderApp(); }
 function renderApp(){
@@ -305,7 +362,7 @@ function renderApp(){
     <section class="main">
       <header class="topbar">
         <div><h1>${pageTitle()}</h1><div class="sub">${pageSubtitle()}</div></div>
-        <div class="top-actions"><span class="role-pill">${isAdmin()?'Yönetici':'Görüntüleme'}</span>${isAdmin()?'<button class="btn primary" data-action="new-account">+ Yeni Hesap</button>':''}<button class="btn ghost" data-action="logout">Çıkış</button></div>
+        <div class="top-actions"><span class="role-pill">${isAdmin()?'Yönetici':'Görüntüleme'}</span>${isAdmin()?'<button class="btn primary" data-action="new-account">+ Yeni Hesap</button>':''}<button class="btn ghost" data-action="register-passkey">Face ID</button><button class="btn ghost" data-action="logout">Çıkış</button></div>
       </header>
       <div id="pageContent">${renderPage()}</div>
     </section>
@@ -338,6 +395,7 @@ function renderPage(){
 function bindAppEvents(){
   $$('[data-go]').forEach(el=>el.addEventListener('click',()=>setRoute(el.dataset.go,el.dataset.id||null)));
   $('[data-action="logout"]')?.addEventListener('click',logout);
+  $('[data-action="register-passkey"]')?.addEventListener('click',registerPasskey);
   $('[data-action="new-account"]')?.addEventListener('click',openNewAccountModal);
   $$('[data-quick]').forEach(el=>el.addEventListener('click',()=>handleQuick(el.dataset.quick)));
   $$('[data-open-account]').forEach(el=>el.addEventListener('click',()=>setRoute('account',el.dataset.openAccount)));
@@ -478,7 +536,7 @@ function renderNotifications(){
     }).join('')}</div>`:`<div class="empty"><strong>Onay bekleyen ödeme yok</strong>Tüm bildirimler tamamlanmış.</div>`}</div></div>`;
   }
   const notes=state.notifications.filter(n=>n.targetUser===currentUser).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
-  notes.forEach(n=>n.read=true); saveState(false);
+  notes.forEach(n=>n.read=true); fetch('/api/notifications/read',{method:'POST'}).catch(()=>{});
   return `<div class="card"><div class="card-head"><div><h3>Bildirimlerim</h3><p>Yusuf’un ödeme onay ve ret sonuçları</p></div></div>${notes.length?`<div class="page-grid">${notes.map(n=>`<div class="notification ${n.read?'':'unread'}"><strong>${esc(n.title)}</strong><div class="muted" style="margin-top:5px">${esc(n.message)}</div><div class="stat-note">${new Date(n.createdAt).toLocaleString('tr-TR')}</div></div>`).join('')}</div>`:`<div class="empty">Bildirim yok.</div>`}</div>`;
 }
 
@@ -644,7 +702,7 @@ function openDebtPlanModal(debtId){
 }
 function openPaymentClaimModal(planId){
   const p=state.debtPlans.find(x=>x.id===planId); if(!p)return; const amount=num(p.amounts?.[currentUser]); if(amount<=0)return toast('Size tanımlı ödeme yok.','warn'); const d=accountById(p.debtAccountId);
-  modal('Ödeme Yaptım',`<div class="calc-box"><strong>${esc(d.name)}</strong><br>${monthTR(p.month)} • ${money(amount)}<br><span class="muted">Bu bildirim borcu hemen düşürmez. Yusuf onayladıktan sonra düşer.</span></div>${field('Ödeme Tarihi',`<input id="pcDate" class="input" type="date" value="${today()}">`)}${field('Not / Dekont Açıklaması','<textarea id="pcNote" class="textarea" placeholder="Opsiyonel"></textarea>')}`,'<button class="btn ghost" data-close-modal>Vazgeç</button><button id="sendClaim" class="btn good">Yusuf’a Bildir</button>'); $$('[data-close-modal]').forEach(b=>b.addEventListener('click',closeModal)); $('#sendClaim').addEventListener('click',()=>{if(state.paymentClaims.some(c=>c.planId===planId&&c.user===currentUser&&c.status==='pending'))return toast('Zaten onay bekleyen bildiriminiz var.','warn'); state.paymentClaims.push({id:uid('claim'),planId,debtAccountId:p.debtAccountId,user:currentUser,month:p.month,amount,paymentDate:$('#pcDate').value,note:$('#pcNote').value.trim(),status:'pending',createdAt:nowISO()}); saveState(); closeModal(); toast('Ödeme bildirimi Yusuf’a gönderildi.','good');});
+  modal('Ödeme Yaptım',`<div class="calc-box"><strong>${esc(d.name)}</strong><br>${monthTR(p.month)} • ${money(amount)}<br><span class="muted">Bu bildirim borcu hemen düşürmez. Yusuf onayladıktan sonra düşer.</span></div>${field('Ödeme Tarihi',`<input id="pcDate" class="input" type="date" value="${today()}">`)}${field('Not / Dekont Açıklaması','<textarea id="pcNote" class="textarea" placeholder="Opsiyonel"></textarea>')}`,'<button class="btn ghost" data-close-modal>Vazgeç</button><button id="sendClaim" class="btn good">Yusuf’a Bildir</button>'); $$('[data-close-modal]').forEach(b=>b.addEventListener('click',closeModal)); $('#sendClaim').addEventListener('click',async()=>{if(state.paymentClaims.some(c=>c.planId===planId&&c.user===currentUser&&c.status==='pending'))return toast('Zaten onay bekleyen bildiriminiz var.','warn'); try{const r=await fetch('/api/payment-claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({planId,paymentDate:$('#pcDate').value,note:$('#pcNote').value.trim()})});const data=await r.json();if(!r.ok)throw new Error(data.error||'Bildirim gönderilemedi.');state=data.state;closeModal();renderApp();toast('Ödeme bildirimi Yusuf’a gönderildi.','good')}catch(e){toast(e.message||'Bildirim gönderilemedi.','bad')}});
 }
 function approveClaim(id){
   if(!isAdmin()) return;
@@ -696,6 +754,11 @@ function toast(message,type='good'){
 }
 
 // Initial render
-if (currentUser && !USERS[currentUser]) currentUser = null;
-if (currentUser){ $('#loginRoot').classList.add('hidden'); $('#appRoot').classList.remove('hidden'); renderApp(); }
-else renderLogin();
+(async function bootstrap(){
+  try{
+    const r=await fetch('/api/auth/me',{cache:'no-store'});
+    if(!r.ok) throw new Error('NO_SESSION');
+    const s=await r.json(); currentUser=s.user; await loadRemoteState();
+    $('#loginRoot').classList.add('hidden'); $('#appRoot').classList.remove('hidden'); renderApp();
+  }catch{currentUser=null; renderLogin();}
+})();
