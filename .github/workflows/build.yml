@@ -1,0 +1,26 @@
+name: Build Check
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: test
+          SUPABASE_SERVICE_ROLE_KEY: test
+          SESSION_SECRET: test-session-secret-abcdefghijklmnopqrstuvwxyz-123456
+          KCK_YUSUF_PASSWORD: "2807"
+          KCK_OMER_PASSWORD: "8080"
+          KCK_TAHA_PASSWORD: "1313"
+          PASSKEY_RP_ID: kutsalcumartesi.com.tr
+          PASSKEY_ORIGIN: https://kutsalcumartesi.com.tr
