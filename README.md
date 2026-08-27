@@ -1,24 +1,29 @@
 # Kutsal Cumartesi Kasa
 
-Next.js tabanlı özel finans paneli.
+Next.js 16 tabanlı özel finans paneli. Ortak veriler Supabase'de saklanır; oturum HttpOnly cookie ile, biyometrik giriş WebAuthn/Passkey ile çalışır.
 
-## Geliştirme
+## Vercel Environment Variables
 
-```bash
-npm install
-npm run dev
-```
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SESSION_SECRET`
+- `KCK_YUSUF_PASSWORD`
+- `KCK_OMER_PASSWORD`
+- `KCK_TAHA_PASSWORD`
+- `PASSKEY_RP_ID=kutsalcumartesi.com.tr`
+- `PASSKEY_ORIGIN=https://kutsalcumartesi.com.tr`
 
-Ardından `http://localhost:3000` adresini açın.
+Şifreler ve service-role anahtarı kaynak koduna yazılmaz.
 
-## Vercel
+## Face ID / Passkey
 
-Bu depo Vercel'de Next.js olarak doğrudan yayınlanabilir.
+Önce şifre ile giriş yapılır. Oturum açıldıktan sonra `Face ID` butonuyla cihazda passkey kaydedilir. Sonraki girişlerde `Face ID / Passkey ile Gir` kullanılabilir.
 
-## Kullanıcılar
+Passkey alan adına bağlıdır; production kaydı `https://kutsalcumartesi.com.tr` üzerinde yapılmalıdır.
 
-- Yusuf / 2807 — tam yetki
-- Ömer / 123 — görüntüleme + ödeme bildirimi
-- Taha / 1313 — görüntüleme + ödeme bildirimi
+## Yetki
 
-> Not: Bu sürüm veriyi tarayıcı `localStorage` içinde tutar. Farklı cihazların aynı veriyi görmesi için sonraki aşamada ortak veritabanı ve sunucu tarafı kimlik doğrulama eklenmelidir.
+- Yusuf: tam yetki.
+- Ömer ve Taha: görüntüleme; kendilerine tanımlı borç ödemesi için `Ödeme Yaptım` bildirimi gönderebilir.
+- Ödeme bildirimi borcu düşürmez. Yusuf onayladığında cari giriş + borç hesabına transfer hareketleri oluşur ve borç azalır.
