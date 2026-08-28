@@ -1,2 +1,14 @@
-import { NextResponse } from 'next/server';import { getSession } from '../../../../lib/auth.js';import { readState,writeState } from '../../../../lib/supabase-admin.js';
-export async function POST(){const s=await getSession();if(!s)return NextResponse.json({error:'Oturum gerekli.'},{status:401});const state=await readState();let changed=false;for(const n of state.notifications||[]){if(n.targetUser===s.user&&!n.read){n.read=true;changed=true}}if(changed)await writeState(state);return NextResponse.json({ok:true})}
+import { NextResponse } from 'next/server';
+import { getSession } from '../../../../lib/auth.js';
+import { markNotificationsRead } from '../../../../lib/supabase-admin.js';
+
+export async function POST(){
+  const s=await getSession();
+  if(!s)return NextResponse.json({error:'Oturum gerekli.'},{status:401});
+  try{
+    await markNotificationsRead(s.user);
+    return NextResponse.json({ok:true});
+  }catch(e){
+    return NextResponse.json({error:'Bildirimler güncellenemedi.',detail:String(e?.message||e)},{status:500});
+  }
+}
